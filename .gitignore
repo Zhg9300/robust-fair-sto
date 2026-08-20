@@ -1,0 +1,33 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local data and generated experiment artifacts
+components/data/
+components/pool/
+results/
+batch_results/
+plan-do-not-upload/
+*.pdf
+
+# Native/binary build outputs
+*.pyd
+*.so
+*.dll
+*.dylib
+
+# Tooling and editor files
+.idea/
+.vscode/
+.pytest_cache/
+.mypy_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
