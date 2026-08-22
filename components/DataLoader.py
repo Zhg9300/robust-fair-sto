@@ -28,6 +28,7 @@ class DataLoader:
                 item["local_training_number"],
                 item["local_test_data"],
                 item["local_test_number"],
+                item.get("test_loss_evaluator"),
             )
 
     def cal_data_shape(self, raw_shape):

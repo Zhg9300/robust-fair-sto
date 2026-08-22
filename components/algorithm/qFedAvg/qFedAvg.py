@@ -52,14 +52,17 @@ class qFedAvg(cn.Algorithm):
         if self.qffl_update_rule == 'objective_gradient':
             self._validate_objective_gradient_mode()
             self.save_name += ' qffl_objective_gradient'
+        elif self.gradient_aggregator.name != 'mean':
+            raise ValueError(
+                'normalized qFedAvg does not support robust gradient aggregators; '
+                'use qffl_update_rule="objective_gradient".'
+            )
 
     def _validate_objective_gradient_mode(self):
         if self.epochs != 1:
             raise ValueError('objective_gradient requires E=1.')
         if self.online_client_num != self.client_num:
             raise ValueError('objective_gradient requires full client participation (C=1).')
-        if self.train_setting.get('sgd_step', False):
-            raise ValueError('objective_gradient requires sgd_step=False.')
 
     def _qffl_objective_gradient(self, gradient, loss):
         loss_tensor = torch.as_tensor(
@@ -76,6 +79,7 @@ class qFedAvg(cn.Algorithm):
                 self.lr * gradients,
                 dim=1,
             ),
+            report_path='evaluate',
         )
         self.module.reshape_vec_to_model_params(
             old_model_params - self.lr * update_direction
@@ -119,6 +123,7 @@ class qFedAvg(cn.Algorithm):
             if self.qffl_update_rule == 'objective_gradient':
                 g_locals, _ = self.evaluate(
                     gradient_transform=self._qffl_objective_gradient,
+                    use_full_loss=True,
                 )
                 self._apply_objective_gradient_update(old_model_params, g_locals)
             else:

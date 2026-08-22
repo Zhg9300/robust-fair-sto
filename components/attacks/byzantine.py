@@ -12,6 +12,7 @@ EPS = 1e-12
 class ByzantineAttackController:
     MODES = {
         "alie",
+        "gaussian",
         "ipm",
         "label_random_flip",
         "label_cyclic_flip",
@@ -24,7 +25,7 @@ class ByzantineAttackController:
         "loss_ranking",
         "high_loss_malicious_gradient",
         "low_loss_malicious_gradient",
-        "disguise",
+        "adaptive_copying",
         "multi_decoy_minority",
     }
     LOSS_DEPENDENT_MODES = {
@@ -35,7 +36,7 @@ class ByzantineAttackController:
         "low_loss_malicious_gradient",
     }
     IMPERSONATION_MODES = {
-        "disguise",
+        "adaptive_copying",
         "multi_decoy_minority",
     }
     LABEL_POISONING_MODES = {
@@ -185,10 +186,12 @@ class ByzantineAttackController:
             raise RuntimeError("attack_mode requires at least one Byzantine client.")
         if self.attack_mode == "large_norm" and self.attack_scale <= 1.0:
             raise RuntimeError("large_norm requires attack_scale > 1.")
-        if self.attack_mode == "ipm" and (
+        if self.attack_mode in {"gaussian", "ipm"} and (
             not math.isfinite(self.attack_scale) or self.attack_scale <= 0.0
         ):
-            raise RuntimeError("ipm requires a finite attack_scale > 0.")
+            raise RuntimeError(
+                f"{self.attack_mode} requires a finite attack_scale > 0."
+            )
         if self.alie_z is not None and not math.isfinite(self.alie_z):
             raise RuntimeError("alie_z must be a finite number.")
         honest_client_num = self.client_num - len(self._byzantine_id_set)
@@ -196,7 +199,9 @@ class ByzantineAttackController:
             self.client_num > 0
             and honest_client_num <= 0
             and self.attack_mode in (
-                self.LOSS_DEPENDENT_MODES | self.IMPERSONATION_MODES | {"alie", "ipm"}
+                self.LOSS_DEPENDENT_MODES
+                | self.IMPERSONATION_MODES
+                | {"alie", "gaussian", "ipm"}
             )
         ):
             raise RuntimeError(f"{self.attack_mode} requires at least one honest client.")
@@ -225,6 +230,8 @@ class ByzantineAttackController:
         if self.attack_mode == "alie":
             alie_z = "auto" if self.alie_z is None else self._suffix_token(self.alie_z)
             parts.append(f"aliez{alie_z}")
+        if self.attack_mode == "gaussian":
+            parts.append(f"attackseed{self.attack_seed}")
         if self.attack_mode == "label_random_flip":
             parts.append(f"labelseed{self.attack_seed}")
         if self.attack_target_clients:
@@ -305,7 +312,12 @@ class ByzantineAttackController:
 
         prepared = [self._prepare_report(report) for report in reports]
         if self.is_active(round_id):
-            self._apply_active_attack(prepared, old_model_params, lr)
+            self._apply_active_attack(
+                prepared,
+                old_model_params,
+                lr,
+                round_id=round_id,
+            )
         rows = [
             self._make_log_row(round_id, report, path, old_model_params, lr)
             for report in prepared
@@ -329,7 +341,7 @@ class ByzantineAttackController:
             "alie_z": "NA",
         }
 
-    def _apply_active_attack(self, reports, old_model_params, lr):
+    def _apply_active_attack(self, reports, old_model_params, lr, round_id):
         byzantine_reports = [
             report for report in reports
             if report["client_id"] in self._byzantine_id_set
@@ -351,6 +363,11 @@ class ByzantineAttackController:
             honest_reports,
             byzantine_reports,
         )
+        gaussian_gradients = self._gaussian_gradients(
+            round_id,
+            honest_reports,
+            byzantine_reports,
+        )
         if effective_alie_z is not None:
             for report in reports:
                 report["alie_z"] = effective_alie_z
@@ -368,6 +385,13 @@ class ByzantineAttackController:
 
             if mode == "sign_flip":
                 self._set_reported_gradient(report, self._sign_flip(report), old_model_params, lr)
+            elif mode == "gaussian":
+                self._set_reported_gradient(
+                    report,
+                    gaussian_gradients.get(report["client_id"]),
+                    old_model_params,
+                    lr,
+                )
             elif mode == "large_norm":
                 self._set_reported_gradient(report, self._large_norm(report), old_model_params, lr)
             elif mode == "sybil_direction":
@@ -378,7 +402,7 @@ class ByzantineAttackController:
                 self._set_reported_gradient(report, alie_gradient, old_model_params, lr)
             elif mode in {"high_loss_malicious_gradient", "low_loss_malicious_gradient"}:
                 self._set_reported_gradient(report, self._sign_flip(report), old_model_params, lr)
-            elif mode in {"disguise", "multi_decoy_minority"}:
+            elif mode in {"adaptive_copying", "multi_decoy_minority"}:
                 self._apply_impersonation(report, target_map, old_model_params, lr)
 
     def _shared_sybil_gradient(self, byzantine_reports):
@@ -407,6 +431,62 @@ class ByzantineAttackController:
                 "ipm requires at least one online honest client with a gradient."
             )
         return -self.attack_scale * torch.stack(honest_gradients).mean(dim=0)
+
+    def _gaussian_gradients(self, round_id, honest_reports, byzantine_reports):
+        """Return deterministic Gaussian directions with an honest-norm scale."""
+        if self.attack_mode != "gaussian":
+            return {}
+
+        honest_gradients = [
+            report["true_gradient"]
+            for report in honest_reports
+            if report["true_gradient"] is not None
+        ]
+        if not honest_gradients:
+            raise RuntimeError(
+                "gaussian requires at least one online honest client with a gradient."
+            )
+
+        mean_honest_norm = sum(
+            float(torch.linalg.vector_norm(gradient).detach().cpu().item())
+            for gradient in honest_gradients
+        ) / len(honest_gradients)
+        target_norm = self.attack_scale * mean_honest_norm
+        maximum_seed = 2**63 - 1
+        gradients = {}
+
+        for report in byzantine_reports:
+            reference = report["true_gradient"]
+            if reference is None:
+                continue
+            if target_norm <= EPS:
+                gradients[report["client_id"]] = torch.zeros_like(reference)
+                continue
+
+            derived_seed = (
+                self.attack_seed
+                + 1_000_003 * int(round_id)
+                + 10_007 * int(report["client_id"])
+            ) % maximum_seed
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(derived_seed)
+            direction = torch.randn(
+                reference.shape,
+                generator=generator,
+                dtype=torch.float64,
+                device="cpu",
+            )
+            direction_norm = torch.linalg.vector_norm(direction)
+            if float(direction_norm.item()) <= EPS:
+                direction.zero_()
+                direction.reshape(-1)[0] = 1.0
+                direction_norm = torch.linalg.vector_norm(direction)
+            direction = direction * (target_norm / float(direction_norm.item()))
+            gradients[report["client_id"]] = direction.to(
+                device=reference.device,
+                dtype=reference.dtype,
+            )
+        return gradients
 
     def _alie_gradient(self, honest_reports, byzantine_reports):
         if self.attack_mode != "alie":
@@ -467,7 +547,7 @@ class ByzantineAttackController:
         return losses
 
     def _build_target_map(self, reports, byzantine_reports):
-        if self.attack_mode not in {"disguise", "multi_decoy_minority"}:
+        if self.attack_mode not in {"adaptive_copying", "multi_decoy_minority"}:
             return {}
         reports_by_id = {report["client_id"]: report for report in reports}
         for target_id in self.attack_target_clients:
@@ -477,7 +557,7 @@ class ByzantineAttackController:
                 raise RuntimeError(f"Attack target client {target_id} must be honest.")
         target_map = {}
         byzantine_ids = sorted(report["client_id"] for report in byzantine_reports)
-        if self.attack_mode == "disguise":
+        if self.attack_mode == "adaptive_copying":
             target_id = self.attack_target_clients[0]
             return {client_id: reports_by_id[target_id] for client_id in byzantine_ids}
         for idx, client_id in enumerate(byzantine_ids):

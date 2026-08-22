@@ -46,10 +46,14 @@ def outFunc(alg):
         for metric_history in metric_histories
         if metric_history['test_loss'][-1] is not None
     ])
+    has_accuracy = all(
+        metric_history.get('test_accuracy')
+        for metric_history in metric_histories
+    )
     local_acc_list = np.array([
         metric_history['test_accuracy'][-1]
         for metric_history in metric_histories
-    ])
+    ]) if has_accuracy else np.array([])
     print(str(alg.params))
 
     stream_log = ""
@@ -61,8 +65,26 @@ def outFunc(alg):
     if excluded_ids:
         stream_log += f'Evaluation Client IDs: {evaluation_ids}\n'
         stream_log += f'Excluded Evaluation Client IDs: {excluded_ids}\n'
-    stream_log += f'Test Acc List: {[f"{x:.3f}" for x in local_acc_list]}\n'
-    stream_log += f'Average: {format(np.mean(local_acc_list), ".3f")}. Variance: {format(np.var(local_acc_list), ".3f")}. Min: {format(np.min(local_acc_list), ".3f")}. Max: {format(np.max(local_acc_list), ".3f")}' + '\n'
+    stream_log += f'Test Loss List: {[f"{x:.6f}" for x in loss_list]}\n'
+    if len(loss_list) > 0:
+        stream_log += (
+            f'Loss Average: {np.mean(loss_list):.6f}. '
+            f'Loss Variance: {np.var(loss_list):.6f}. '
+            f'Loss Min: {np.min(loss_list):.6f}. '
+            f'Loss Max: {np.max(loss_list):.6f}\n'
+        )
+    if has_accuracy:
+        stream_log += f'Test Acc List: {[f"{x:.3f}" for x in local_acc_list]}\n'
+        stream_log += f'Average: {format(np.mean(local_acc_list), ".3f")}. Variance: {format(np.var(local_acc_list), ".3f")}. Min: {format(np.min(local_acc_list), ".3f")}. Max: {format(np.max(local_acc_list), ".3f")}' + '\n'
+    theorem_metrics = getattr(alg.data_loader, 'theorem_metrics', None)
+    if callable(theorem_metrics):
+        values = theorem_metrics(alg.module)
+        stream_log += f'Honest Loss Variance V_H(w): {np.var(loss_list):.9f}\n'
+        stream_log += (
+            'Honest Average-Loss Gap F_H(w)-F_H(w_H*): '
+            f'{values["honest_average_loss_gap"]:.9f}\n'
+        )
+        stream_log += f'Distance ||w-v||_2: {values["distance_to_v"]:.9f}\n'
     stream_log += '\n'
     alg.stream_log = stream_log + alg.stream_log
     print(stream_log)
@@ -100,6 +122,16 @@ def read_params():
         '--min_client_samples',
         help="pathological unbalanced-partition minimum: 'auto' (10%% of mean) or a non-negative integer",
         type=parse_min_client_samples, default='auto')
+
+    parser.add_argument('--linear_noise_std',
+                        help='V.A linear-regression noise standard deviation',
+                        type=float, default=1e-3)
+    parser.add_argument('--linear_delta',
+                        help='V.A exceptional-worker parameter separation',
+                        type=float, default=1.0)
+    parser.add_argument('--linear_train_batches',
+                        help='number of generated V.A training batches per worker',
+                        type=int, default=100)
 
     parser.add_argument('--NC', help='client_class_num', type=int, default=1)
 
@@ -161,10 +193,10 @@ def read_params():
     parser.add_argument('--gradient_aggregator',
                         help='gradient aggregator',
                         choices=('mean', 'cwtm', 'cwm', 'median', 'faba',
-                                 'centered_clipping', 'nbs'),
+                                 'krum', 'mda', 'centered_clipping', 'nbs'),
                         type=str, default='mean')
     parser.add_argument('--gradient_aggregator_f',
-                        help='assumed Byzantine count, or f=beta*m for NBS',
+                        help='assumed Byzantine count (NBS may use f=beta*m)',
                         type=int, default=None)
     parser.add_argument('--alpha', help='alpha of FedFV',
                         type=float, default=0.1)
@@ -189,7 +221,7 @@ def read_params():
     parser.add_argument('--dishonest_num',
                         help='dishonest number', type=int, default=0)
     parser.add_argument('--attack_mode',
-                        help='Byzantine attack mode', type=str, default='None')
+                        help='Byzantine attack mode, e.g. adaptive_copying', type=str, default='None')
     parser.add_argument('--byzantine_ids',
                         help='comma-separated or list-style Byzantine client ids', type=str, default='None')
     parser.add_argument('--attack_start_round',
@@ -197,7 +229,7 @@ def read_params():
     parser.add_argument('--attack_end_round',
                         help='last communication round to apply attack', type=str, default='None')
     parser.add_argument('--attack_seed',
-                        help='seed for randomized attacks such as label_random_flip', type=int, default=1)
+                        help='seed for randomized attacks such as gaussian and label_random_flip', type=int, default=1)
     parser.add_argument('--attack_scale',
                         help='Byzantine attack scale', type=float, default=1.0)
     parser.add_argument('--alie_z',
@@ -261,11 +293,23 @@ def initialize(params):
 
     module.generate_model(data_loader.input_data_shape,
                           data_loader.target_class_num)
+    model_initializer = getattr(data_loader, 'initialize_model', None)
+    if callable(model_initializer):
+        model_initializer(module)
     validate_batch_configuration(params, module.model)
 
     optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, module.model.parameters(
     )), lr=params['lr'], momentum=params['momentum'], weight_decay=params['weight_decay'])
-    train_setting = {'criterion': torch.nn.CrossEntropyLoss(label_smoothing=0.1),
+    criterion_builder = getattr(data_loader, 'build_criterion', None)
+    criterion = (
+        criterion_builder()
+        if callable(criterion_builder)
+        else torch.nn.CrossEntropyLoss(label_smoothing=0.1)
+    )
+    metric_builder = getattr(data_loader, 'build_metrics', None)
+    metric_list = metric_builder() if callable(metric_builder) else [cn.Correct()]
+
+    train_setting = {'criterion': criterion,
                      'optimizer': optimizer, 'lr_decay': params['decay'],
                      'sgd_step': sgd_step,
                      'micro_batch_size': micro_batch_size,
@@ -280,7 +324,7 @@ def initialize(params):
                           client_num=data_loader.pool_size,
                           online_client_num=int(
                               data_loader.pool_size * params['C']),
-                          metric_list=[cn.Correct()],
+                          metric_list=metric_list,
                           max_comm_round=params['R'],
                           epochs=params['E'],
                           outFunc=outFunc,

@@ -156,7 +156,7 @@ class Algorithm:
 
     def _aggregator_suffix(self, prefix, aggregator, configured_f):
         suffix = f'{prefix}_{aggregator.name}'
-        if aggregator.name in {'cwtm', 'faba', 'nbs'}:
+        if aggregator.name in {'cwtm', 'faba', 'krum', 'mda', 'nbs'}:
             suffix += f'_f{"auto" if configured_f is None else configured_f}'
         elif aggregator.name == 'centered_clipping':
             suffix += f'_tau{aggregator.clipping_radius}_iter{aggregator.iterations}'
@@ -260,7 +260,10 @@ class Algorithm:
         self._attack_log_initialized = True
         self._pending_attack_log_rows = []
 
-    def record_attack_effective_metrics(self, target_client_list=None, effective_update_norms=None, effective_weights=None):
+    def record_attack_effective_metrics(self, target_client_list=None,
+                                        effective_update_norms=None,
+                                        effective_weights=None,
+                                        report_path='train'):
         if not self._pending_attack_log_rows:
             return
         if target_client_list is None:
@@ -277,7 +280,7 @@ class Algorithm:
         for row in self._pending_attack_log_rows:
             if row['round'] != self.current_comm_round:
                 continue
-            if row.get('path') != 'train':
+            if row.get('path') != report_path:
                 continue
             client_id = row['client_id']
             if client_id in update_norm_by_id:
@@ -336,7 +339,8 @@ class Algorithm:
         if update_module:
             self.module.reshape_vec_to_model_params(aggregate_params)
 
-    def evaluate(self, target_client_list=None, gradient_transform=None):
+    def evaluate(self, target_client_list=None, gradient_transform=None,
+                 use_full_loss=False):
         if target_client_list is None:
             target_client_list = self.online_client_list
         if gradient_transform is not None and not callable(gradient_transform):
@@ -344,7 +348,8 @@ class Algorithm:
         reports = []
         for client in target_client_list:
             true_gradient, loss = client.evaluate_gradient(
-                self._label_mapping_for(client.id)
+                self._label_mapping_for(client.id),
+                use_full_loss=use_full_loss,
             )
             if gradient_transform is not None:
                 true_gradient = gradient_transform(true_gradient, loss)

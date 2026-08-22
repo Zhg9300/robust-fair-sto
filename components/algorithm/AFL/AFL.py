@@ -3,6 +3,7 @@ import components as cn
 import numpy as np
 import torch
 
+
 class AFL(cn.Algorithm):
     def __init__(self,
                  name='AFL',
@@ -36,27 +37,48 @@ class AFL(cn.Algorithm):
         self.dynamic_lambdas = np.ones(
             self.online_client_num) * 1.0 / self.online_client_num
 
+    def _aggregation_messages(self, old_model, local_models):
+        """Return AFL dual-weighted client gradients and their weights."""
+        gradients = torch.stack([
+            (old_model - local_model) / self.lr
+            for local_model in local_models
+        ])
+        weights = torch.as_tensor(
+            self.dynamic_lambdas,
+            device=gradients.device,
+            dtype=gradients.dtype,
+        )
+        if weights.numel() != gradients.shape[0]:
+            raise ValueError(
+                'AFL dual weights must match the number of online client messages.'
+            )
+
+        # Embed the dual weight because robust aggregators intentionally ignore
+        # external weights. The online-count factor preserves the original AFL
+        # direction when the arithmetic mean is selected.
+        messages = gradients.shape[0] * weights.reshape(-1, 1) * gradients
+        return messages, weights
 
     def run(self):
         while not self.terminated():
-            m_locals, l_locals = self.train()
             old_model = self.module.span_model_params_to_vec()
-            g_locals = torch.stack([
-                (old_model - local_model) / self.lr
-                for local_model in m_locals
-            ])
+            m_locals, l_locals = self.train()
+            messages, weights = self._aggregation_messages(old_model, m_locals)
+            update_direction = self.aggregate_gradients(messages)
+            self.record_attack_effective_metrics(
+                effective_update_norms=torch.linalg.vector_norm(
+                    self.lr * messages,
+                    dim=1,
+                ),
+                effective_weights=weights,
+            )
 
-            weights = torch.Tensor(
-                self.dynamic_lambdas).float().to(self.device)
-
-            d = []
-            for i in range(len(self.module.Loc_list)):
-                g_locals_layer = g_locals[:, self.module.Loc_list[i]]
-                d_layer = weights @ g_locals_layer
-                d.append(d_layer)
-            d = torch.hstack(d)
-
-            self.update_module(self.module, self.optimizer, self.lr, d)
+            self.update_module(
+                self.module,
+                self.optimizer,
+                self.lr,
+                update_direction,
+            )
             self.client_update()
             self.dynamic_lambdas = [
                 lmb_i+self.lam * float(loss_i) for lmb_i, loss_i in zip(self.dynamic_lambdas, l_locals)]

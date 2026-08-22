@@ -1,4 +1,5 @@
 import math
+from itertools import combinations
 
 import torch
 
@@ -135,6 +136,71 @@ class FABA(Aggregator):
             keep[remove_index] = False
             remaining = remaining[keep]
         return remaining.mean(dim=0)
+
+
+class Krum(Aggregator):
+    """Select the update with the smallest Krum nearest-neighbor score."""
+
+    name = "krum"
+
+    def aggregate(self, updates, weights=None, byzantine_count=0):
+        updates = validate_updates(updates)
+        client_count = updates.shape[0]
+        f = validate_byzantine_count(
+            byzantine_count,
+            client_count,
+            require_honest_majority=True,
+        )
+        if client_count < 2 * f + 3:
+            raise ValueError(
+                "Krum requires at least 2 * byzantine_count + 3 client updates."
+            )
+
+        pairwise_squared_distances = torch.cdist(updates, updates).square()
+        pairwise_squared_distances.fill_diagonal_(float("inf"))
+        neighbor_count = client_count - f - 2
+        nearest_distances = torch.topk(
+            pairwise_squared_distances,
+            k=neighbor_count,
+            dim=1,
+            largest=False,
+            sorted=False,
+        ).values
+        scores = nearest_distances.sum(dim=1)
+        selected_index = int(torch.argmin(scores).detach().cpu().item())
+        return updates[selected_index]
+
+
+class MinimumDiameterAveraging(Aggregator):
+    """Average the size-(n-f) subset with minimum pairwise diameter."""
+
+    name = "mda"
+
+    def aggregate(self, updates, weights=None, byzantine_count=0):
+        updates = validate_updates(updates)
+        client_count = updates.shape[0]
+        f = validate_byzantine_count(
+            byzantine_count,
+            client_count,
+            require_honest_majority=True,
+        )
+        if f == 0:
+            return updates.mean(dim=0)
+
+        subset_size = client_count - f
+        distances = torch.cdist(updates, updates)
+        best_subset = None
+        best_diameter = None
+        for candidate in combinations(range(client_count), subset_size):
+            indices = torch.as_tensor(candidate, device=updates.device)
+            diameter = distances.index_select(0, indices).index_select(1, indices).max()
+            diameter_value = float(diameter.detach().cpu().item())
+            if best_diameter is None or diameter_value < best_diameter:
+                best_diameter = diameter_value
+                best_subset = candidate
+
+        selected_indices = torch.as_tensor(best_subset, device=updates.device)
+        return updates.index_select(0, selected_indices).mean(dim=0)
 
 
 class CenteredClipping(Aggregator):

@@ -7,6 +7,8 @@ from components.aggregator.robust import (
     CoordinateWiseTrimmedMean,
     FABA,
     GeometricMedian,
+    Krum,
+    MinimumDiameterAveraging,
     NormBasedScreening,
 )
 
@@ -21,6 +23,8 @@ def build_aggregator(name="mean", **options):
             tolerance=options.get("aggregator_tolerance", 1e-6),
         ),
         "faba": FABA,
+        "krum": Krum,
+        "mda": MinimumDiameterAveraging,
         "centered_clipping": lambda: CenteredClipping(
             clipping_radius=options.get("cc_tau", 10.0),
             iterations=options.get("cc_iterations", 1),

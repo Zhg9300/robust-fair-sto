@@ -20,6 +20,7 @@ class Client:
         self.local_training_number = 0
         self.local_test_data = None
         self.local_test_number = 0
+        self.test_loss_evaluator = None
         self.training_batch_num = 0
         self.physical_training_batch_num = 0
         self.test_batch_num = 0
@@ -37,12 +38,13 @@ class Client:
         self.criterion = train_setting["criterion"].to(self.device)
 
     def update_data(self, id, local_training_data, local_training_number,
-                    local_test_data, local_test_number):
+                    local_test_data, local_test_number, test_loss_evaluator=None):
         self.id = id
         self.local_training_data = local_training_data
         self.local_training_number = local_training_number
         self.local_test_data = local_test_data
         self.local_test_number = local_test_number
+        self.test_loss_evaluator = test_loss_evaluator
         self.training_batch_num = len(local_training_data)
         physical_count = getattr(local_training_data, "physical_batch_count", None)
         self.physical_training_batch_num = (
@@ -50,7 +52,7 @@ class Client:
             if callable(physical_count)
             else self.training_batch_num
         )
-        self.test_batch_num = len(local_test_data)
+        self.test_batch_num = 0 if local_test_data is None else len(local_test_data)
 
     def _to_model_device(self, inputs, targets):
         if inputs.device != self.device:
@@ -105,6 +107,19 @@ class Client:
             float(total_loss / self.local_training_number),
         )
 
+    def cal_full_loss(self, label_mapping=None):
+        """Evaluate the current model loss over all local training samples."""
+        self.module.model.eval()
+        total_loss = 0.0
+        physical_size = self.micro_batch_size if self._is_full_batch else 0
+        with torch.no_grad():
+            for inputs, targets in self._training_batches(physical_size):
+                inputs, targets = self._to_model_device(inputs, targets)
+                poisoned_targets = self._poison_labels(targets, label_mapping)
+                loss = self.criterion(self.module.model(inputs), poisoned_targets)
+                total_loss += loss.item() * targets.size(0)
+        return float(total_loss / self.local_training_number)
+
     def cal_gradient_loss_sgd(self, label_mapping=None):
         self.module.model.train()
         sample_index = int(np.random.choice(len(self.local_training_data)))
@@ -118,9 +133,15 @@ class Client:
         self.module.model.zero_grad(set_to_none=True)
         return gradient, loss.item()
 
-    def evaluate_gradient(self, label_mapping=None):
+    def evaluate_gradient(self, label_mapping=None, use_full_loss=False):
         if self.sgd_step:
-            return self.cal_gradient_loss_sgd(label_mapping)
+            full_loss = (
+                self.cal_full_loss(label_mapping)
+                if use_full_loss
+                else None
+            )
+            gradient, batch_loss = self.cal_gradient_loss_sgd(label_mapping)
+            return gradient, full_loss if use_full_loss else batch_loss
         return self.cal_gradient_loss(label_mapping)
 
     def train_local(self, epochs, lr, label_mapping=None):
@@ -186,6 +207,13 @@ class Client:
         return average_loss
 
     def test(self):
+        if callable(self.test_loss_evaluator):
+            self.metric_history["local_test_number"] = 1
+            self.metric_history["test_loss"].append(
+                float(self.test_loss_evaluator(self.module))
+            )
+            return copy.deepcopy(self.metric_history)
+
         metric_values = {"test_loss": 0.0}
         metric_values.update({metric.name: 0.0 for metric in self.metric_list})
         self.module.model.eval()

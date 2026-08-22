@@ -1,4 +1,4 @@
-# FairAndRobust
+# On the Tension Between Fairness and Robustness
 
 ## Full-client gradient mode
 
@@ -33,7 +33,7 @@ python benchmark_full_batch.py --device 0 --sizes 0,1024,2048
 The benchmark reports mean gradient time and peak allocated CUDA memory for the
 largest FashionMNIST Dirichlet-0.5 client.
 
-FairAndRobust is a Python research codebase for federated learning experiments, with a focus on fairness and robustness across clients. It includes classification experiments on image datasets.
+FairAndRobust is a Python research codebase for federated learning experiments, with a focus on fairness and robustness across clients. It includes image-classification experiments and the structured linear-regression experiment from Section V.A of `journal-v8.pdf`.
 
 ## Setup
 
@@ -50,16 +50,107 @@ For GPU experiments, install the PyTorch build that matches the CUDA version on 
 Current public components are:
 
 - Algorithms: `FedAvg`, `qFedAvg`, `AFL`, `FedFV`, `FedMGDA_plus`, `DRFL`, and `AdaFed`.
-- Models: `CNN` and `MLP`.
+- Models: `CNN`, `MLP`, and `LinearRegression`.
 - Data loaders: `DataLoader_cifar10_pat`, `DataLoader_cifar10_dir`,
-  `DataLoader_fashion_pat`, and `DataLoader_fashion_dir`.
-- Metric: `Correct`.
+  `DataLoader_fashion_pat`, `DataLoader_fashion_dir`, and
+  `DataLoader_linear_regression`.
+- Classification metric: `Correct`. Linear regression reports analytic
+  honest-worker losses and does not create accuracy fields.
 
 Run a classification experiment:
 
 ```bash
 python run.py --algorithm FedAvg --dataloader DataLoader_cifar10_pat
 ```
+
+### Section V.A linear regression
+
+The V.A loader is integrated into the normal
+`run.py -> DataLoader -> Module -> Algorithm` path. It supports the paper's
+`N=H=8` honest-only mean baseline and the `n=10,h=8,b=2` defended/attacked
+setting. Both use `d=K=20`, `v=0`, `theta=e1`, and `X=I_20` in every worker
+batch. Workers 0--6 and, when present, the benign distributions in slots 8--9
+use `w_dagger=0`; exceptional honest worker 7 uses `w_dagger=delta*e1`.
+The `N=8` baseline trains and evaluates all eight workers. The `N=10` setting
+excludes slots 8--9 from evaluation. All evaluation losses are analytic
+population losses from equation (27).
+
+Every linear-regression run starts from the honest average-loss optimum
+`w_H*=v+(delta/h)*theta` (distance `delta/h` from `v`). This shared nonzero
+initialization makes the clean fairness-aware movement and the attacked
+trajectory back toward the aligned model visible; image-classification model
+initialization is unchanged.
+
+The paper does not specify all numerical values needed to instantiate this
+finite experiment. The project-supplied defaults are `linear_noise_std=1e-3`,
+`linear_delta=1`, and `linear_train_batches=100`; they can be overridden with
+the corresponding CLI options. Data and noise are reproduced by
+`--partition_seed`. The training loss is `0.5*K*MSE(mean)`, matching
+`0.5*||Xw-y||_2^2` for each theorem-sized batch. `--B 20` enables stochastic
+mini-batch gradients, while `--B full --sgd_step False` enables a full local
+gradient.
+
+A one-round stochastic qFFL/Krum run is:
+
+```bash
+python run.py --device -1 \
+  --module LinearRegression \
+  --dataloader DataLoader_linear_regression \
+  --algorithm qFedAvg \
+  --N 10 --C 1 --B 20 --R 1 --E 1 \
+  --q 1 --qffl_update_rule objective_gradient --sgd_step True \
+  --gradient_aggregator krum --gradient_aggregator_f 2 \
+  --weight_decay 0 --decay 1 --test_interval 1
+```
+
+For the adaptive copying attack, append:
+
+```bash
+--attack_mode adaptive_copying --dishonest_num 2 \
+--attack_target_clients 0 --copy_gradient True --copy_loss False
+```
+
+Use `--gradient_aggregator mda` for MDA. The linear-regression output reports
+the honest loss list, its mean and population variance `V_H(w)`,
+`F_H(w)-F_H(w_H*)`, and `||w-v||_2`. Equation (28)'s step-size schedule, the
+projection set, and theorem-result decisions are not part of this implementation
+stage; use the existing `lr` and `decay` options.
+
+The compact paper-oriented batch runner executes FedAvg and qFFL with mean
+aggregation on the honest-only `N=8` set, plus qFFL under `adaptive_copying` on `N=10`
+with CWM, CWTM, geometric median, Krum, MDA, FABA, and NBS:
+
+```bash
+python batch_run_linear_regression.py
+```
+
+The current defaults are built in: paired seeds 1--10, 400 communication rounds,
+and a checkpoint every 10 rounds. The runner incrementally writes two files
+under `results/`: a `*_summary.csv` with one row per completed run and a
+long-format `*_trajectory.csv` with one row per method, seed, and checkpoint.
+Both tables record the initialization and its distance from `v`; the trajectory
+also contains the exact analytic round-0 metrics. Override the
+defaults with options such as `--seeds 1,2,3`, `--test-interval 5`, or
+`--aggregators krum,mda`. `--dry-run` prints the full experiment matrix without
+starting training. Centered Clipping remains available through `run.py` but is
+not included here because it is not in the V.A aggregator list.
+
+Generate multi-seed trajectory panels and final-result panels from the long
+table:
+
+```bash
+python plot_linear_regression_panels.py results/linear_regression_batch_TIMESTAMP_trajectory.csv
+```
+
+The plotting script separates the clean baselines from adaptive-copying runs.
+Clean panels show the original metrics; attack panels show log-scale absolute
+deviations from the values at `v`. Each attacked trajectory panel includes a
+linear-scale inset over the last three checkpoints, where the aggregator
+differences are largest; inset curves show method means without confidence-band
+occlusion. Thin trajectories and final scatter points show individual paired
+seeds, while the bold means use two-sided 95% Student-t confidence intervals.
+PNG and vector PDF versions are written beside the CSV. Use `--no-pdf` when only
+PNG output is needed.
 
 `--decay` controls the round-wise learning-rate schedule, while
 `--weight_decay` controls SGD L2 regularization. Classification runs default to
@@ -82,6 +173,8 @@ Common attack modes:
 - `large_norm`: scale Byzantine gradients; requires `--attack_scale > 1`.
 - `sybil_direction`: make online Byzantine clients report the same malicious direction.
 - `alie`: make Byzantine clients report the shared ALIE gradient estimated from online honest gradients.
+- `gaussian`: report independent seeded Gaussian directions rescaled relative to
+  the online honest-gradient norms.
 - `ipm`: report the negative scaled mean of the online honest gradients.
 - `label_random_flip`: poison Byzantine training labels with a seeded random derangement.
 - `label_cyclic_flip`: poison Byzantine training labels with `b -> (b + 1) mod 10`.
@@ -91,7 +184,7 @@ Common attack modes:
 - `loss_ranking`: report losses distributed over the high-loss rank range.
 - `high_loss_malicious_gradient`: high reported loss plus sign-flip malicious gradient.
 - `low_loss_malicious_gradient`: low reported loss plus sign-flip malicious gradient.
-- `disguise`: all Byzantine clients copy one honest target.
+- `adaptive_copying`: all Byzantine clients copy one honest target.
 - `multi_decoy_minority`: Byzantine clients cycle through multiple honest targets.
 
 Common Byzantine client settings:
@@ -122,6 +215,12 @@ Common attack intensity settings:
 
 `sign_flip` with `--attack_scale 1` is plain gradient reversal. `large_norm` requires a scale greater than 1. Loss attacks use `--loss_bias` to shift reported losses.
 
+For `gaussian`, each Byzantine client receives an independent deterministic
+Gaussian direction whose L2 norm is `attack_scale` times the mean L2 norm of
+the online honest gradients. The direction is reproduced from `attack_seed`,
+the communication round, and the client id. Gaussian attacks leave reported
+losses unchanged and require a finite positive `attack_scale`.
+
 ALIE uses the omniscient-attack assumption: in each gradient-bearing call it
 estimates the coordinate-wise mean `mu` and population standard deviation
 `sigma` from the online honest gradients, then makes every online Byzantine
@@ -146,7 +245,7 @@ The cyclic and targeted mappings are deterministic.
 Current experiments use deterministic Byzantine client ids: explicit
 `--byzantine_ids` when provided, otherwise the last `dishonest_num` resolved
 client ids. `attack_seed` controls randomized attacks such as
-`label_random_flip`.
+`gaussian` and `label_random_flip`.
 
 Common attack timing settings:
 
@@ -164,7 +263,7 @@ Common attack timing settings:
 Impersonation attacks require target clients and at least one copied channel:
 
 ```bash
---attack_mode disguise --dishonest_num 2 --attack_target_clients 0 --copy_loss True --copy_gradient True
+--attack_mode adaptive_copying --dishonest_num 2 --attack_target_clients 0 --copy_loss True --copy_gradient True
 --attack_mode multi_decoy_minority --dishonest_num 3 --attack_target_clients 0,1,2 --copy_loss True --copy_gradient True
 ```
 
@@ -202,13 +301,39 @@ Server-side gradient aggregation is configured through `--gradient_aggregator`:
 - `cwm`: coordinate-wise median.
 - `median`: Euclidean geometric median.
 - `faba`: iterative farthest-update removal.
+- `krum`: select the message with the smallest squared-distance score over its
+  nearest `n-f-2` other messages.
+- `mda`: exactly search size-`n-f` subsets, choose the one with minimum maximum
+  pairwise distance, and average it.
 - `centered_clipping`: stateful centered clipping.
 - `nbs`: norm-based screening; remove the `f` largest L2 norms and average the rest.
 
-For CWTM, FABA, and NBS, `--gradient_aggregator_f` is the assumed Byzantine count. When it is omitted,
-the number of currently online Byzantine clients is used. CWTM and FABA
-require strictly more than twice that count in online clients. NBS only requires
-`0 <= f < online_client_count`.
+For CWTM, FABA, Krum, MDA, and NBS, `--gradient_aggregator_f` is the assumed
+Byzantine count. When it is omitted, the number of currently online Byzantine
+clients is used. CWTM, FABA, and MDA require strictly more than twice that
+count in online clients; Krum requires `n >= 2f+3`. NBS only requires
+`0 <= f < online_client_count`. MDA is an exact combinatorial implementation
+intended for the small worker counts in the V.A experiment. Krum breaks score
+ties by worker-message order, and MDA breaks diameter ties lexicographically.
+
+DRFL and AFL embed their fairness weights in the messages sent to this
+aggregation interface. With `m` online clients, DRFL aggregates
+`m * alpha_i * g_i`, where `alpha_i` is the normalized reported-loss weight;
+AFL aggregates `m * lambda_i * g_i`, where `lambda_i` is its current dual
+weight. The factor `m` makes `--gradient_aggregator mean` reproduce the original
+weighted update, while CWTM, CWM, geometric median, FABA, Krum, MDA, and NBS
+operate on the complete fairness-weighted vectors. Centered Clipping remains
+available but is outside the DRFL/AFL validation matrix described here.
+
+For the Section V.C adaptive-copying condition with DRFL or AFL, start the
+attack in round 1 and copy both channels so the copied gradient and its
+loss/dual-weight evolution remain synchronized:
+
+```bash
+--attack_mode adaptive_copying --attack_start_round 1 \
+--dishonest_num 2 --byzantine_ids 8,9 --attack_target_clients 0 \
+--copy_gradient True --copy_loss True
+```
 
 Use `--evaluation_excluded_ids` to keep attack and no-attack runs on the same
 evaluation clients.
@@ -240,13 +365,18 @@ python run.py --algorithm qFedAvg \
 Here `gradient_aggregator_f` is the paper's screening count `f = beta * m`.
 Set it explicitly when screening is desired in a no-attack run; otherwise the
 automatic count is zero. Replacing `nbs` with `mean` gives the vanilla q-FFL
-baseline under the same direct-objective update. The strict paper mode requires
-full client participation, one full local-gradient pass (`E=1`), and
-`sgd_step=False`. The default `qffl_update_rule=normalized` retains the original
-qFedAvg update with its `sum(h_i)` denominator.
+baseline under the same direct-objective update. The direct-objective mode
+requires full client participation and `E=1`. With `sgd_step=False`, both the
+loss and gradient use the complete local training set. With `sgd_step=True`,
+the outer `F_i(w)^q` uses the complete local training-set empirical loss while
+the gradient factor uses one randomly selected mini-batch. The default
+`qffl_update_rule=normalized` retains the original qFedAvg update with its
+`sum(h_i)` denominator and rejects non-mean gradient aggregators explicitly.
 
-For `objective_gradient`, attacks are injected after forming `F_i^q * grad(F_i)`;
-therefore IPM estimates and reverses the mean q-FFL gradient in H-nobs runs.
+For `objective_gradient`, attacks are injected after forming the complete
+loss-weighted qFFL message; therefore copying attacks duplicate the final
+transmitted message, and IPM estimates and reverses the mean q-FFL gradient in
+H-nobs runs.
 For label poisoning, the ordering is instead: remap Byzantine training labels,
 compute `F_i` and `grad(F_i)`, form `F_i^q * grad(F_i)`, then apply NBS.
 
@@ -254,7 +384,7 @@ Suggested first attack sweep. Build valid combinations rather than a full Cartes
 
 | Dimension | Values |
 | --- | --- |
-| `attack_mode` | `None`, `sign_flip`, `large_norm`, `alie`, `ipm`, `label_random_flip`, `label_cyclic_flip`, `label_targeted_flip`, `loss_inflation`, `loss_deflation`, `high_loss_malicious_gradient` |
+| `attack_mode` | `None`, `sign_flip`, `large_norm`, `alie`, `gaussian`, `ipm`, `label_random_flip`, `label_cyclic_flip`, `label_targeted_flip`, `loss_inflation`, `loss_deflation`, `high_loss_malicious_gradient` |
 | `dishonest_num` | `1`, `2` |
 | `attack_scale` | `0.5`, `1`, `5`, `10`, `50` |
 | `alie_z` | omitted (automatic), `0.5` |
@@ -266,6 +396,21 @@ Run batch experiments with GPU scheduling:
 ```bash
 python batch_run.py --gpus 0,1 --max-per-gpu 2
 ```
+
+The Section V.C image-classification tuning matrices have dedicated runners:
+
+```bash
+python batch_run_fashion_vc.py --gpus 0,1 --max-per-gpu 2
+python batch_run_cifar10_vc.py --gpus 0,1 --max-per-gpu 2
+```
+
+Each runner covers the one-class pathological and Dirichlet-0.5 partitions,
+the configured qFedAvg/DRFL/AFL grids, clean mean baselines, and Gaussian,
+sign-flipping, and adaptive-copying attacks with Mean plus every validated
+non-Centered-Clipping robust aggregator. The default is seed 1; use
+`--seeds 1,2,3` to expand paired seeds or `--dry-run` to write the complete
+command manifest and result workbook without starting training. Outputs are
+written incrementally under a timestamped directory in `batch_results/`.
 
 ## Generated Files
 

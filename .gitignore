@@ -8,6 +8,7 @@ __pycache__/
 venv/
 env/
 
+
 # Local data and generated experiment artifacts
 components/data/
 components/pool/
@@ -15,7 +16,7 @@ results/
 batch_results/
 plan-do-not-upload/
 *.pdf
-
+tests/
 # Native/binary build outputs
 *.pyd
 *.so

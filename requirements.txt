@@ -4,3 +4,4 @@ torchvision
 cvxopt
 openpyxl
 pillow
+matplotlib
