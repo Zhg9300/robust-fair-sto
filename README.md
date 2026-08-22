@@ -397,20 +397,27 @@ Run batch experiments with GPU scheduling:
 python batch_run.py --gpus 0,1 --max-per-gpu 2
 ```
 
-The Section V.C image-classification tuning matrices have dedicated runners:
+The Section V.C image-classification tuning matrices are split into one
+runner per dataset and attack condition:
 
 ```bash
-python batch_run_fashion_vc.py --gpus 0,1 --max-per-gpu 2
-python batch_run_cifar10_vc.py --gpus 0,1 --max-per-gpu 2
+python run_vc_cifar_byzantine_batch_no_attack.py --gpus 0,1 --max-per-gpu 2
+python run_vc_cifar_byzantine_batch_gaussian_attack.py --gpus 0,1 --max-per-gpu 2
+python run_vc_cifar_byzantine_batch_sign_flip_attack.py --gpus 0,1 --max-per-gpu 2
+python run_vc_cifar_byzantine_batch_adaptive_copying_attack.py --gpus 0,1 --max-per-gpu 2
+
+python run_vc_fashion_byzantine_batch_no_attack.py --gpus 0,1 --max-per-gpu 2
+python run_vc_fashion_byzantine_batch_gaussian_attack.py --gpus 0,1 --max-per-gpu 2
+python run_vc_fashion_byzantine_batch_sign_flip_attack.py --gpus 0,1 --max-per-gpu 2
+python run_vc_fashion_byzantine_batch_adaptive_copying_attack.py --gpus 0,1 --max-per-gpu 2
 ```
 
-Each runner covers the one-class pathological and Dirichlet-0.5 partitions,
-the configured qFedAvg/DRFL/AFL grids, clean mean baselines, and Gaussian,
-sign-flipping, and adaptive-copying attacks with Mean plus every validated
-non-Centered-Clipping robust aggregator. The default is seed 1; use
-`--seeds 1,2,3` to expand paired seeds or `--dry-run` to write the complete
-command manifest and result workbook without starting training. Outputs are
-written incrementally under a timestamped directory in `batch_results/`.
+Each runner uses `batch_run.py` directly for grid expansion, GPU scheduling,
+logging, and incremental result writing. Both partition schemes and the
+configured qFedAvg/DRFL/AFL grids are retained. Attack runners sweep Mean plus
+every validated non-Centered-Clipping robust aggregator, while no-attack
+runners use Mean only. GPU defaults are `2,3` unless `--gpus` is supplied; use
+`--dry-run` to inspect all generated commands without starting training.
 
 ## Generated Files
 
