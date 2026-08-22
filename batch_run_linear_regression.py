@@ -281,6 +281,7 @@ def build_command(experiment, args):
         command.extend([
             "--q", "1",
             "--qffl_update_rule", "objective_gradient",
+            "--qffl_loss_mode", "full",
         ])
     if experiment["attack_mode"] == "adaptive_copying":
         command.extend([

@@ -98,7 +98,8 @@ python run.py --device -1 \
   --dataloader DataLoader_linear_regression \
   --algorithm qFedAvg \
   --N 10 --C 1 --B 20 --R 1 --E 1 \
-  --q 1 --qffl_update_rule objective_gradient --sgd_step True \
+  --q 1 --qffl_update_rule objective_gradient \
+  --qffl_loss_mode full --sgd_step True \
   --gradient_aggregator krum --gradient_aggregator_f 2 \
   --weight_decay 0 --decay 1 --test_interval 1
 ```
@@ -368,8 +369,10 @@ automatic count is zero. Replacing `nbs` with `mean` gives the vanilla q-FFL
 baseline under the same direct-objective update. The direct-objective mode
 requires full client participation and `E=1`. With `sgd_step=False`, both the
 loss and gradient use the complete local training set. With `sgd_step=True`,
-the outer `F_i(w)^q` uses the complete local training-set empirical loss while
-the gradient factor uses one randomly selected mini-batch. The default
+the default `qffl_loss_mode=same_batch` computes the outer loss and stochastic
+gradient from the same randomly selected mini-batch. Pass
+`--qffl_loss_mode full` to instead compute the outer loss over the complete
+local training set while retaining a random mini-batch gradient. The default
 `qffl_update_rule=normalized` retains the original qFedAvg update with its
 `sum(h_i)` denominator and rejects non-mean gradient aggregators explicitly.
 

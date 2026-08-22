@@ -26,11 +26,13 @@ class qFedAvg(cn.Algorithm):
                  test_conflicts=False,
                  params=None,
                  q=0.1,
-                 qffl_update_rule='normalized'):
+                 qffl_update_rule='normalized',
+                 qffl_loss_mode='same_batch'):
 
         if params is not None:
             q = params['q']
             qffl_update_rule = params.get('qffl_update_rule', qffl_update_rule)
+            qffl_loss_mode = params.get('qffl_loss_mode', qffl_loss_mode)
         q = float(q)
         if not math.isfinite(q) or q < 0.0:
             raise ValueError('q must be finite and non-negative.')
@@ -38,6 +40,11 @@ class qFedAvg(cn.Algorithm):
         if qffl_update_rule not in {'normalized', 'objective_gradient'}:
             raise ValueError(
                 'qffl_update_rule must be "normalized" or "objective_gradient".'
+            )
+        qffl_loss_mode = str(qffl_loss_mode).strip().lower()
+        if qffl_loss_mode not in {'same_batch', 'full'}:
+            raise ValueError(
+                'qffl_loss_mode must be "same_batch" or "full".'
             )
         if save_name is None:
             save_name = name + ' ' + module.name + ' E' + str(epochs) + ' lr' + str(
@@ -47,11 +54,14 @@ class qFedAvg(cn.Algorithm):
                          metric_list, max_comm_round,  epochs, save_name, outFunc, write_log,  test_conflicts, params)
         self.q = q
         self.qffl_update_rule = qffl_update_rule
+        self.qffl_loss_mode = qffl_loss_mode
 
         self.lr = self.train_setting['optimizer'].defaults['lr']
         if self.qffl_update_rule == 'objective_gradient':
             self._validate_objective_gradient_mode()
-            self.save_name += ' qffl_objective_gradient'
+            self.save_name += (
+                f' qffl_objective_gradient_loss_{self.qffl_loss_mode}'
+            )
         elif self.gradient_aggregator.name != 'mean':
             raise ValueError(
                 'normalized qFedAvg does not support robust gradient aggregators; '
@@ -123,7 +133,7 @@ class qFedAvg(cn.Algorithm):
             if self.qffl_update_rule == 'objective_gradient':
                 g_locals, _ = self.evaluate(
                     gradient_transform=self._qffl_objective_gradient,
-                    use_full_loss=True,
+                    use_full_loss=self.qffl_loss_mode == 'full',
                 )
                 self._apply_objective_gradient_update(old_model_params, g_locals)
             else:

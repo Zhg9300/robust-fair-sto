@@ -104,6 +104,7 @@ def _algorithm_grids() -> List[Dict[str, object]]:
             "base": {
                 "algorithm": "qFedAvg",
                 "qffl_update_rule": "objective_gradient",
+                "qffl_loss_mode": "same_batch",
                 "decay": 1.0,
             },
             "grid": {
@@ -154,19 +155,13 @@ def get_experiment_groups(
         "N": 10,
         "C": 1.0,
         "B": 64,
-        "micro_batch_size": 0,
         "data_device": "model",
-        "min_client_samples": "auto",
         "balance": True,
         "R": spec.rounds,
         "E": 1,
-        "test_interval": 50,
+        "test_interval": 100,
         "sgd_step": True,
-        "momentum": 0.0,
         "weight_decay": 5e-4,
-        "attack_start_round": 1,
-        "attack_end_round": "None",
-        "loss_bias": 0.0,
         "evaluation_excluded_ids": "8,9",
         **attack,
     }

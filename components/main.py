@@ -217,6 +217,14 @@ def read_params():
         help='q-FFL update: normalized qFedAvg or direct objective gradient descent',
         choices=('normalized', 'objective_gradient'),
         default='normalized')
+    parser.add_argument(
+        '--qffl_loss_mode',
+        help=(
+            'loss used by objective-gradient q-FFL: the same sampled batch '
+            'as the stochastic gradient, or the full local training set'
+        ),
+        choices=('same_batch', 'full'),
+        default='same_batch')
 
     parser.add_argument('--dishonest_num',
                         help='dishonest number', type=int, default=0)
