@@ -1,4 +1,4 @@
-"""Run the CIFAR-10 V.C no-attack matrix through batch_run.py."""
+"""Run the CIFAR-10 no-attack matrix through batch_run.py."""
 
 import batch_run
 from batch_run_image_vc_common import CIFAR10, get_experiment_groups as _build

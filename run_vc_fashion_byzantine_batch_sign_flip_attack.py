@@ -1,4 +1,4 @@
-"""Run the Fashion-MNIST V.C sign-flip matrix through batch_run.py."""
+"""Run the Fashion-MNIST sign-flip matrix through batch_run.py."""
 
 import batch_run
 from batch_run_image_vc_common import FASHION, get_experiment_groups as _build

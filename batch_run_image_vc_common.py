@@ -1,4 +1,4 @@
-"""Experiment-group definitions shared by the eight V.C batch runners.
+"""Experiment-group definitions shared by the image-classification batch runners.
 
 This module only builds the ``base``/``grid`` dictionaries consumed by
 ``batch_run.py``. GPU scheduling, command execution, logging, and result
@@ -178,7 +178,7 @@ def get_experiment_groups(
                 grid["gradient_aggregator"] = list(AGGREGATORS)
             groups.append({
                 "name": (
-                    f"vc_{spec.slug}_{scenario}_{partition_name}_"
+                    f"image_{spec.slug}_{scenario}_{partition_name}_"
                     f"{algorithm['name']}"
                 ),
                 "base": {

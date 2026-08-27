@@ -1,8 +1,8 @@
-"""Run the Section V.A linear-regression matrix and collect plotting tables.
+"""Run the structured linear-regression matrix and collect plotting tables.
 
 The attack-free FedAvg/qFFL mean baselines train on N=H=8 workers.  The
 adaptive-copying experiments use n=10, h=8, b=2 and apply every robust aggregator
-listed in Section V.A of journal-v8.pdf.
+configured for this benchmark.
 """
 
 import argparse
@@ -21,7 +21,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_SEEDS = tuple(range(1, 11))
-PAPER_ROBUST_AGGREGATORS = (
+DEFAULT_ROBUST_AGGREGATORS = (
     "cwm",
     "cwtm",
     "median",
@@ -137,11 +137,12 @@ def parse_aggregators(value):
     )
     if not aggregators:
         raise argparse.ArgumentTypeError("at least one aggregator is required")
-    unknown = sorted(set(aggregators).difference(PAPER_ROBUST_AGGREGATORS))
+    unknown = sorted(set(aggregators).difference(DEFAULT_ROBUST_AGGREGATORS))
     if unknown:
-        supported = ", ".join(PAPER_ROBUST_AGGREGATORS)
+        supported = ", ".join(DEFAULT_ROBUST_AGGREGATORS)
         raise argparse.ArgumentTypeError(
-            f"unsupported V.A aggregator(s): {', '.join(unknown)}; choose from {supported}"
+            f"unsupported linear-regression aggregator(s): "
+            f"{', '.join(unknown)}; choose from {supported}"
         )
     if len(aggregators) != len(set(aggregators)):
         raise argparse.ArgumentTypeError("aggregators must not contain duplicates")
@@ -150,7 +151,7 @@ def parse_aggregators(value):
 
 def read_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Run and summarize the paper V.A linear-regression experiments."
+        description="Run and summarize the structured linear-regression experiments."
     )
     parser.add_argument(
         "--seeds",
@@ -162,20 +163,20 @@ def read_args(argv=None):
     parser.add_argument(
         "--test-interval",
         type=positive_int,
-        default=10,
+        default=50,
         help="checkpoint interval written to the trajectory CSV",
     )
     parser.add_argument("--device", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=0.1)
     parser.add_argument("--decay", type=float, default=1.0)
-    parser.add_argument("--noise-std", type=float, default=1e-3)
+    parser.add_argument("--noise-std", type=float, default=1e-2)
     parser.add_argument("--delta", type=float, default=1.0)
     parser.add_argument("--train-batches", type=positive_int, default=100)
     parser.add_argument(
         "--aggregators",
         type=parse_aggregators,
-        default=PAPER_ROBUST_AGGREGATORS,
-        help="comma-separated subset of the V.A robust aggregators",
+        default=DEFAULT_ROBUST_AGGREGATORS,
+        help="comma-separated subset of the supported robust aggregators",
     )
     parser.add_argument(
         "--output",
@@ -212,7 +213,7 @@ def read_args(argv=None):
     return args
 
 
-def build_experiments(seeds, aggregators=PAPER_ROBUST_AGGREGATORS):
+def build_experiments(seeds, aggregators=DEFAULT_ROBUST_AGGREGATORS):
     experiments = []
     for seed in seeds:
         for algorithm in ("FedAvg", "qFedAvg"):
@@ -461,7 +462,7 @@ def run_experiment(experiment, args):
         status = "OK" if completed.returncode == 0 and parse_ok else "FAILED"
         error = completed.stderr.strip()
         if completed.returncode == 0 and not parse_ok:
-            error = "run succeeded but final V.A metrics were not found in stdout"
+            error = "run succeeded but final regression metrics were not found in stdout"
         return_code = completed.returncode
     except OSError as exc:
         metrics = parse_output("")

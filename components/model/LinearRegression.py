@@ -5,7 +5,7 @@ import components as cn
 
 
 class LinearRegression(cn.Module):
-    """Bias-free 20-dimensional linear model used by Section V.A."""
+    """Bias-free 20-dimensional linear-regression model."""
 
     DIMENSION = 20
 

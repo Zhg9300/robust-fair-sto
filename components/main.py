@@ -76,9 +76,9 @@ def outFunc(alg):
     if has_accuracy:
         stream_log += f'Test Acc List: {[f"{x:.3f}" for x in local_acc_list]}\n'
         stream_log += f'Average: {format(np.mean(local_acc_list), ".3f")}. Variance: {format(np.var(local_acc_list), ".3f")}. Min: {format(np.min(local_acc_list), ".3f")}. Max: {format(np.max(local_acc_list), ".3f")}' + '\n'
-    theorem_metrics = getattr(alg.data_loader, 'theorem_metrics', None)
-    if callable(theorem_metrics):
-        values = theorem_metrics(alg.module)
+    regression_metrics = getattr(alg.data_loader, 'regression_metrics', None)
+    if callable(regression_metrics):
+        values = regression_metrics(alg.module)
         stream_log += f'Honest Loss Variance V_H(w): {np.var(loss_list):.9f}\n'
         stream_log += (
             'Honest Average-Loss Gap F_H(w)-F_H(w_H*): '
@@ -124,13 +124,13 @@ def read_params():
         type=parse_min_client_samples, default='auto')
 
     parser.add_argument('--linear_noise_std',
-                        help='V.A linear-regression noise standard deviation',
+                        help='linear-regression noise standard deviation',
                         type=float, default=1e-3)
     parser.add_argument('--linear_delta',
-                        help='V.A exceptional-worker parameter separation',
+                        help='linear-regression exceptional-worker parameter separation',
                         type=float, default=1.0)
     parser.add_argument('--linear_train_batches',
-                        help='number of generated V.A training batches per worker',
+                        help='number of generated linear-regression batches per worker',
                         type=int, default=100)
 
     parser.add_argument('--NC', help='client_class_num', type=int, default=1)
@@ -166,7 +166,7 @@ def read_params():
     parser.add_argument('--momentum', help='momentum', type=float, default=0.0)
     parser.add_argument(
         '--weight_decay',
-        help='SGD weight decay coefficient; use 0 for paper-aligned runs',
+        help='SGD weight decay coefficient; use 0 for unregularized runs',
         type=float,
         default=5e-4)
 

@@ -17,6 +17,12 @@ batch_results/
 plan-do-not-upload/
 *.pdf
 tests/
+
+# Local batch runners and plotting utilities
+batch_run*.py
+run_vc_*.py
+plot_*.py
+
 # Native/binary build outputs
 *.pyd
 *.so
