@@ -30,6 +30,7 @@ from components.dataloaders.DataLoader_cifar10_dir import DataLoader_cifar10_dir
 from components.dataloaders.DataLoader_fashion_pat import DataLoader_fashion_pat
 from components.dataloaders.DataLoader_fashion_dir import DataLoader_fashion_dir
 from components.dataloaders.DataLoader_linear_regression import DataLoader_linear_regression
+from components.dataloaders.DataLoader_linear_regression_online import DataLoader_linear_regression_online
 
 
 data_folder_path = os.path.dirname(os.path.abspath(__file__)) + '/data/'

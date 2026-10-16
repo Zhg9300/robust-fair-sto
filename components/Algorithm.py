@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import csv
 import json
+import math
 from components.aggregator import build_aggregator
 from components.attacks import ByzantineAttackController
 from components.param_utils import build_optimizer_like, parse_id_list
@@ -87,6 +88,7 @@ class Algorithm:
 
         self.lr = self.train_setting['optimizer'].defaults['lr']
         self.initial_lr = self.lr
+        self._configure_learning_rate_and_projection()
 
         self.optimizer = build_optimizer_like(
             train_setting['optimizer'],
@@ -117,6 +119,35 @@ class Algorithm:
         self._pending_attack_log_rows = []
         self._attack_event_id = 0
         self._attack_log_initialized = False
+
+    def _configure_learning_rate_and_projection(self):
+        self.lr_schedule = self.params.get('lr_schedule', 'exponential')
+        self.lr_power = float(self.params.get('lr_power', 0.6))
+        self.lr_period = float(self.params.get('lr_period', 100.0))
+        if self.lr_schedule not in {'exponential', 'polynomial'}:
+            raise ValueError('lr_schedule must be exponential or polynomial.')
+        if self.lr_schedule == 'polynomial':
+            if not math.isfinite(self.initial_lr) or self.initial_lr <= 0.0:
+                raise ValueError('Polynomial learning rate requires a positive finite lr.')
+            if not math.isfinite(self.lr_power) or not 0.5 < self.lr_power <= 1.0:
+                raise ValueError('lr_power must satisfy 0.5 < lr_power <= 1.')
+            if not math.isfinite(self.lr_period) or self.lr_period <= 0.0:
+                raise ValueError('lr_period must be positive and finite.')
+            if self.train_setting['lr_decay'] != 1.0:
+                raise ValueError('Polynomial learning rate requires decay=1.')
+            self.save_name += (
+                f' p{self.lr_power:g}T{self.lr_period:g}'
+            )
+
+        radius = self.params.get('projection_radius')
+        self.projection_radius = None if radius is None else float(radius)
+        if self.projection_radius is not None:
+            if not math.isfinite(self.projection_radius) or self.projection_radius <= 0.0:
+                raise ValueError('projection_radius must be positive and finite.')
+            if (getattr(self.data_loader, 'task_type', None) == 'linear_regression'
+                    and self.projection_radius < self.data_loader.delta / 2.0):
+                raise ValueError('Linear regression requires projection_radius >= delta/2.')
+            self.save_name += f' proj{self.projection_radius:g}'
 
     @staticmethod
     def _parse_aggregator_count(value, name):
@@ -192,8 +223,14 @@ class Algorithm:
             param_group['lr'] = lr
 
     def adjust_learning_rate(self):
-        self.lr = self.initial_lr * \
-            self.train_setting['lr_decay']**self.current_comm_round
+        if self.lr_schedule == 'polynomial':
+            # terminated() calls this before incrementing the round: first update has t=0.
+            self.lr = self.initial_lr * (
+                1.0 + self.current_comm_round / self.lr_period
+            ) ** (-self.lr_power)
+        else:
+            self.lr = self.initial_lr * \
+                self.train_setting['lr_decay']**self.current_comm_round
         self.update_learning_rate(self.optimizer, self.lr)
 
     def update_module(self, module, optimizer, lr, g):
@@ -317,6 +354,17 @@ class Algorithm:
         if target_client_list is None:
             target_client_list = self.online_client_list
         with torch.no_grad():
+            # Project the updated server model onto a closed ball around v=0,
+            # before clients receive it and before the next checkpoint evaluation.
+            if self.projection_radius is not None:
+                parameter = self.module.span_model_params_to_vec()
+                norm = torch.linalg.vector_norm(parameter)
+                if not torch.isfinite(norm):
+                    raise FloatingPointError('Cannot project non-finite model parameters.')
+                if norm > self.projection_radius:
+                    self.module.reshape_vec_to_model_params(
+                        parameter * (self.projection_radius / norm)
+                    )
             for client in target_client_list:
                 for server_parameter, client_parameter in zip(
                     self.module.model.parameters(), client.module.model.parameters()
@@ -340,17 +388,27 @@ class Algorithm:
             self.module.reshape_vec_to_model_params(aggregate_params)
 
     def evaluate(self, target_client_list=None, gradient_transform=None,
-                 use_full_loss=False):
+                 use_full_loss=False, use_population_loss=False):
         if target_client_list is None:
             target_client_list = self.online_client_list
         if gradient_transform is not None and not callable(gradient_transform):
             raise TypeError('gradient_transform must be callable or None.')
+        if use_population_loss:
+            if use_full_loss:
+                raise ValueError('Population and empirical full-loss modes are exclusive.')
+            if getattr(self.data_loader, 'task_type', None) != 'linear_regression':
+                raise ValueError('Population loss requires analytic linear-regression losses.')
+            if any(not callable(getattr(client, 'test_loss_evaluator', None))
+                   for client in target_client_list):
+                raise ValueError('Population loss requires an analytic evaluator on every client.')
         reports = []
         for client in target_client_list:
             true_gradient, loss = client.evaluate_gradient(
                 self._label_mapping_for(client.id),
                 use_full_loss=use_full_loss,
             )
+            if use_population_loss:
+                loss = client.test_loss_evaluator(client.module)
             if gradient_transform is not None:
                 true_gradient = gradient_transform(true_gradient, loss)
             reports.append({

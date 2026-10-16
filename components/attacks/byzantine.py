@@ -3,6 +3,7 @@ from statistics import NormalDist
 
 import torch
 
+from attack_names import normalize_attack_mode
 from components.param_utils import parse_id_list
 
 
@@ -25,7 +26,7 @@ class ByzantineAttackController:
         "loss_ranking",
         "high_loss_malicious_gradient",
         "low_loss_malicious_gradient",
-        "adaptive_copying",
+        "mimic_attack",
         "multi_decoy_minority",
     }
     LOSS_DEPENDENT_MODES = {
@@ -36,7 +37,7 @@ class ByzantineAttackController:
         "low_loss_malicious_gradient",
     }
     IMPERSONATION_MODES = {
-        "adaptive_copying",
+        "mimic_attack",
         "multi_decoy_minority",
     }
     LABEL_POISONING_MODES = {
@@ -106,7 +107,7 @@ class ByzantineAttackController:
             lowered = stripped.lower()
             if lowered in {"", "none", "null", "false", "off"}:
                 return None
-            return lowered
+            return normalize_attack_mode(lowered)
         return str(value).lower()
 
     @staticmethod
@@ -402,7 +403,7 @@ class ByzantineAttackController:
                 self._set_reported_gradient(report, alie_gradient, old_model_params, lr)
             elif mode in {"high_loss_malicious_gradient", "low_loss_malicious_gradient"}:
                 self._set_reported_gradient(report, self._sign_flip(report), old_model_params, lr)
-            elif mode in {"adaptive_copying", "multi_decoy_minority"}:
+            elif mode in {"mimic_attack", "multi_decoy_minority"}:
                 self._apply_impersonation(report, target_map, old_model_params, lr)
 
     def _shared_sybil_gradient(self, byzantine_reports):
@@ -547,7 +548,7 @@ class ByzantineAttackController:
         return losses
 
     def _build_target_map(self, reports, byzantine_reports):
-        if self.attack_mode not in {"adaptive_copying", "multi_decoy_minority"}:
+        if self.attack_mode not in {"mimic_attack", "multi_decoy_minority"}:
             return {}
         reports_by_id = {report["client_id"]: report for report in reports}
         for target_id in self.attack_target_clients:
@@ -557,7 +558,7 @@ class ByzantineAttackController:
                 raise RuntimeError(f"Attack target client {target_id} must be honest.")
         target_map = {}
         byzantine_ids = sorted(report["client_id"] for report in byzantine_reports)
-        if self.attack_mode == "adaptive_copying":
+        if self.attack_mode == "mimic_attack":
             target_id = self.attack_target_clients[0]
             return {client_id: reports_by_id[target_id] for client_id in byzantine_ids}
         for idx, client_id in enumerate(byzantine_ids):

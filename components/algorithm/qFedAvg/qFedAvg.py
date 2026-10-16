@@ -42,10 +42,12 @@ class qFedAvg(cn.Algorithm):
                 'qffl_update_rule must be "normalized" or "objective_gradient".'
             )
         qffl_loss_mode = str(qffl_loss_mode).strip().lower()
-        if qffl_loss_mode not in {'same_batch', 'full'}:
+        if qffl_loss_mode not in {'same_batch', 'full', 'population'}:
             raise ValueError(
-                'qffl_loss_mode must be "same_batch" or "full".'
+                'qffl_loss_mode must be "same_batch", "full", or "population".'
             )
+        if qffl_loss_mode == 'population' and qffl_update_rule != 'objective_gradient':
+            raise ValueError('Population loss requires qffl_update_rule="objective_gradient".')
         if save_name is None:
             save_name = name + ' ' + module.name + ' E' + str(epochs) + ' lr' + str(
                 train_setting['optimizer'].defaults['lr']) + ' decay' + str(train_setting['lr_decay']) + ' q' + str(q)
@@ -131,9 +133,14 @@ class qFedAvg(cn.Algorithm):
         while not self.terminated():
             old_model_params = self.module.span_model_params_to_vec()
             if self.qffl_update_rule == 'objective_gradient':
+                population_options = (
+                    {'use_population_loss': True}
+                    if self.qffl_loss_mode == 'population' else {}
+                )
                 g_locals, _ = self.evaluate(
                     gradient_transform=self._qffl_objective_gradient,
                     use_full_loss=self.qffl_loss_mode == 'full',
+                    **population_options,
                 )
                 self._apply_objective_gradient_update(old_model_params, g_locals)
             else:

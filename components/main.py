@@ -4,6 +4,7 @@ import numpy as np
 import argparse
 import torch
 import sys
+from attack_names import normalize_attack_mode
 from components.param_utils import parse_batch_size, parse_bool, parse_min_client_samples
 
 
@@ -163,6 +164,18 @@ def read_params():
     parser.add_argument('--lr', help='learning rate', type=float, default=0.1)
     parser.add_argument('--decay', help='learning rate decay',
                         type=float, default=0.999)
+    parser.add_argument(
+        '--lr_schedule', choices=('exponential', 'polynomial'), default='exponential',
+        help='round-wise learning rate schedule; polynomial requires decay=1')
+    parser.add_argument(
+        '--lr_power', type=float, default=0.6,
+        help='polynomial exponent p: lr_t=lr*(1+t/lr_period)^(-p), 0.5<p<=1')
+    parser.add_argument(
+        '--lr_period', type=float, default=100.0,
+        help='positive time scale T_0 for the polynomial schedule')
+    parser.add_argument(
+        '--projection_radius', type=float, default=None,
+        help='optional server-model projection onto the closed L2 ball around zero')
     parser.add_argument('--momentum', help='momentum', type=float, default=0.0)
     parser.add_argument(
         '--weight_decay',
@@ -221,15 +234,16 @@ def read_params():
         '--qffl_loss_mode',
         help=(
             'loss used by objective-gradient q-FFL: the same sampled batch '
-            'as the stochastic gradient, or the full local training set'
+            'as the stochastic gradient, the full local training set, '
+            'or the analytic population loss for linear regression'
         ),
-        choices=('same_batch', 'full'),
+        choices=('same_batch', 'full', 'population'),
         default='same_batch')
 
     parser.add_argument('--dishonest_num',
                         help='dishonest number', type=int, default=0)
     parser.add_argument('--attack_mode',
-                        help='Byzantine attack mode, e.g. adaptive_copying', type=str, default='None')
+                        help='Byzantine attack mode, e.g. mimic_attack', type=normalize_attack_mode, default='None')
     parser.add_argument('--byzantine_ids',
                         help='comma-separated or list-style Byzantine client ids', type=str, default='None')
     parser.add_argument('--attack_start_round',

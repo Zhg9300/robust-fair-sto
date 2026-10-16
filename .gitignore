@@ -18,6 +18,12 @@ plan-do-not-upload/
 *.pdf
 tests/
 
+# Local Excel workbooks
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+
 # Local batch runners and plotting utilities
 batch_run*.py
 run_vc_*.py

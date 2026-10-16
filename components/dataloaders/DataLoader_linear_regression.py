@@ -119,8 +119,8 @@ class DataLoader_linear_regression(DataLoader):
                                 delta, train_batches, data_device):
         if pool_size not in cls.SUPPORTED_WORKER_COUNTS:
             raise ValueError(
-                "The linear-regression setup requires N=8 for the honest-only "
-                "mean baseline or N=10 when two Byzantine slots are present."
+                "The linear-regression setup requires N=8 for honest-only "
+                "experiments or N=10 when two Byzantine slots are present."
             )
         if not math.isclose(float(params.get("C", 1.0)), 1.0):
             raise ValueError("Linear regression requires full worker participation (C=1).")
