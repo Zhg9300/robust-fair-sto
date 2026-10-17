@@ -29,7 +29,7 @@ See `python run.py --help` for available options.
 
 - Algorithms: FedAvg, q-FFL (`qFedAvg`), AFL, FedFV, FedMGDA+, DRFL, and AdaFed.
 - Models: CNN, MLP, and linear regression.
-- Datasets: CIFAR-10, FashionMNIST, and synthetic linear-regression data.
+- Datasets: FashionMNIST, and synthetic linear-regression data.
 - Image partitions: pathological and Dirichlet.
 
 Select an aggregation rule with `--gradient_aggregator`:
